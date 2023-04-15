@@ -1,6 +1,6 @@
 module Main where
 
-import Numeric (readDec, readHex, readOct)
+import Numeric (readDec, readFloat, readHex, readOct)
 import System.Environment (getArgs)
 import Text.ParserCombinators.Parsec hiding (spaces)
 
@@ -9,6 +9,7 @@ data Type0Val
   | List [Type0Val]
   | DotList [Type0Val] Type0Val
   | Number Integer
+  | FloatN Double
   | Str String
   | Charac Char
   | Boolean Bool
@@ -67,13 +68,34 @@ parseNumberStd = do
     if null numTag
       then many1 digit
       else many1 (oneOf "0123456789abcdefABCDEF")
-  let num = case readDecOrHex base numStr of
-        [(n, "")] -> n
-        _ -> error "Invalid number"
-  return $ Number num
 
-readDecOrHex :: Int -> String -> [(Integer, String)]
-readDecOrHex base str
+  decimalPoint <- try (char '.') <|> return '\0'
+  rest <-
+    if decimalPoint == '.'
+      then many1 digit
+      else return ""
+
+  let final
+        | null rest = numStr
+        | otherwise = numStr ++ [decimalPoint] ++ rest
+
+  if null rest
+    then case readDecOctHex base final of
+      [(n, "")] -> return $ Number n
+      _ -> error "Invalid number"
+    else case readFloatNum final of
+      [(n, "")] -> return $ FloatN n
+      _ -> error "Invalid number"
+
+readFloatNum :: String -> [(Double, String)]
+readFloatNum str = case readDec str of
+  [(n, "")] -> [(fromIntegral n, "")]
+  _ -> case readFloat str of
+    [(n, "")] -> [(n, "")]
+    _ -> error "Invalid float"
+
+readDecOctHex :: Int -> String -> [(Integer, String)]
+readDecOctHex base str
   | base == 8 = readOct str
   | base == 10 = readDec str
   | base == 16 = readHex str
@@ -119,6 +141,8 @@ readExpr src = case parse (spaces >> parseExpr) "type0" src of
       "Atom " ++ s
     Number n -> do
       "Number " ++ show n
+    FloatN n -> do
+      "Float " ++ show n
     Str ss -> do
       "Str " ++ ss
     Boolean True -> do
