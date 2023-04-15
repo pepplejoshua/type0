@@ -14,6 +14,20 @@ data Type0Val
   | Charac Char
   | Boolean Bool
 
+stringify :: Type0Val -> String
+stringify (Atom s) = s
+stringify (Number n) = show n
+stringify (FloatN n) = show n
+stringify (Str ss) = "\"" ++ ss ++ "\""
+stringify (Boolean True) = "#t"
+stringify (Boolean False) = "#f"
+stringify (List items) = "(" ++ stringifyList items ++ ")"
+stringify (DotList head tail) = "(" ++ stringifyList head ++ " . " ++ stringify tail ++ ")"
+stringify (Charac ch) = "'" ++ [ch] ++ "'"
+
+stringifyList :: [Type0Val] -> String
+stringifyList = unwords . map stringify
+
 symbol :: Parser Char
 symbol = oneOf "!$%&|*+-/:<=>?@^_~#"
 
@@ -126,32 +140,38 @@ parseChar = do
     _ -> return c
   return $ Charac c
 
+parseList :: Parser Type0Val
+parseList = List <$> sepBy parseExpr spaces
+
+parseDotList :: Parser Type0Val
+parseDotList = do
+  head <- endBy parseExpr spaces
+  tail <- char '.' >> spaces >> parseExpr
+  return $ DotList head tail
+
+parseQuoted :: Parser Type0Val
+parseQuoted = do
+  char '\''
+  x <- parseExpr
+  return $ List [Atom "quote", x]
+
 parseExpr :: Parser Type0Val
 parseExpr =
   parseNumberStd
     <|> parseChar
     <|> parseStringR5RS
     <|> parseAtom
+    <|> parseQuoted
+    <|> do
+      char '('
+      x <- try parseList <|> parseDotList
+      char ')'
+      return x
 
 readExpr :: String -> String
 readExpr src = case parse (spaces >> parseExpr) "type0" src of
   Left err -> "No match: " ++ show err
-  Right val -> case val of
-    Atom s -> do
-      "Atom " ++ s
-    Number n -> do
-      "Number " ++ show n
-    FloatN n -> do
-      "Float " ++ show n
-    Str ss -> do
-      "Str " ++ ss
-    Boolean True -> do
-      "Boolean true"
-    Boolean False -> do
-      "Boolean false"
-    Charac ch -> do
-      "Character " ++ [ch]
-    _ -> "Matched Input!"
+  Right val -> stringify val
 
 main :: IO ()
 main = do
