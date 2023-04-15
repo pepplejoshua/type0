@@ -14,6 +14,8 @@ data Type0Val
   | Charac Char
   | Boolean Bool
 
+instance Show Type0Val where show = stringify
+
 stringify :: Type0Val -> String
 stringify (Atom s) = s
 stringify (Number n) = show n
@@ -178,7 +180,7 @@ parseExpr =
 readExpr :: String -> String
 readExpr src = case parse parseExpr "type0" src of
   Left err -> "No match: " ++ show err
-  Right val -> stringify val
+  Right val -> show val
 
 main :: IO ()
 main = do
