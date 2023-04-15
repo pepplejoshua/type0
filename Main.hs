@@ -99,21 +99,21 @@ parseNumberStd = do
       _ -> error "Invalid number"
     else case readFloatNum final of
       [(n, "")] -> return $ FloatN n
-      _ -> error "Invalid number"
+      _ -> error "Invalid float"
 
 readFloatNum :: String -> [(Double, String)]
 readFloatNum str = case readDec str of
   [(n, "")] -> [(fromIntegral n, "")]
   _ -> case readFloat str of
     [(n, "")] -> [(n, "")]
-    _ -> error "Invalid float"
+    _ -> [(0, str)]
 
 readDecOctHex :: Int -> String -> [(Integer, String)]
 readDecOctHex base str
   | base == 8 = readOct str
   | base == 10 = readDec str
   | base == 16 = readHex str
-  | otherwise = error "Invalid base"
+  | otherwise = [(0, str)]
 
 parseChar :: Parser Type0Val
 parseChar = do
@@ -155,6 +155,12 @@ parseQuoted = do
   x <- parseExpr
   return $ List [Atom "quote", x]
 
+parseUnquote :: Parser Type0Val
+parseUnquote = do
+  char ','
+  x <- parseExpr
+  return $ List [Atom "unquote", x]
+
 parseExpr :: Parser Type0Val
 parseExpr =
   parseNumberStd
@@ -162,6 +168,7 @@ parseExpr =
     <|> parseStringR5RS
     <|> parseAtom
     <|> parseQuoted
+    <|> parseUnquote
     <|> do
       char '('
       x <- try parseList <|> parseDotList
@@ -169,7 +176,7 @@ parseExpr =
       return x
 
 readExpr :: String -> String
-readExpr src = case parse (spaces >> parseExpr) "type0" src of
+readExpr src = case parse parseExpr "type0" src of
   Left err -> "No match: " ++ show err
   Right val -> stringify val
 
