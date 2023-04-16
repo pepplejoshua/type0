@@ -177,12 +177,64 @@ parseExpr =
       char ')'
       return x
 
-readExpr :: String -> String
+apply :: String -> [Type0Val] -> Type0Val
+apply fn args =
+  maybe (Boolean False) ($ args) $ lookup fn primitives
+
+isString :: Type0Val -> Type0Val
+isString (Str _) = Boolean True
+isString _ = Boolean False
+
+isNumber :: Type0Val -> Type0Val
+isNumber (Number _) = Boolean True
+isNumber (FloatN _) = Boolean True
+isNumber _ = Boolean False
+
+isSymbol :: Type0Val -> Type0Val
+isSymbol (Atom _) = Boolean True
+isSymbol _ = Boolean False
+
+primitives :: [(String, [Type0Val] -> Type0Val)]
+primitives =
+  [ ("+", numericBinop (+)),
+    ("-", numericBinop (-)),
+    ("*", numericBinop (*)),
+    ("/", numericBinop div),
+    ("mod", numericBinop mod),
+    ("quotient", numericBinop quot),
+    ("remainder", numericBinop rem),
+    ("sym?", unaryOp isSymbol),
+    ("str?", unaryOp isString),
+    ("num?", unaryOp isNumber)
+  ]
+
+unaryOp :: (Type0Val -> Type0Val) -> [Type0Val] -> Type0Val
+unaryOp fn [param] = fn param
+
+numericBinop :: (Integer -> Integer -> Integer) -> [Type0Val] -> Type0Val
+numericBinop op params = Number $ foldl1 op $ map unpackNum params
+
+unpackNum :: Type0Val -> Integer
+unpackNum (Number n) = n
+unpackNum (FloatN n) = truncate n
+unpackNum n = error $ "Not a number: " ++ show n
+
+eval :: Type0Val -> Type0Val
+eval val@(Atom _) = val
+eval val@(Number _) = val
+eval val@(FloatN _) = val
+eval val@(Str _) = val
+eval val@(Charac _) = val
+eval val@(Boolean _) = val
+eval (List [Atom "quote", val]) = val -- (quote exp)
+eval (List (Atom fn : args)) =
+  apply fn $ map eval args -- (fn arg1 arg2 ...)
+
+readExpr :: String -> Type0Val
 readExpr src = case parse parseExpr "type0" src of
-  Left err -> "No match: " ++ show err
-  Right val -> show val
+  Left err -> Str $ "No match: " ++ show err
+  Right val -> val
 
 main :: IO ()
 main = do
-  args <- getArgs
-  putStrLn (readExpr (head args))
+  getArgs >>= (print . eval . readExpr . head)
