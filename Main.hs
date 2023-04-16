@@ -1,5 +1,12 @@
+{-# OPTIONS_GHC -Wno-deprecations #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use <&>" #-}
+
 module Main where
 
+import Control.Monad.Error
+import Data.Functor qualified
 import Numeric (readDec, readFloat, readHex, readOct)
 import System.Environment (getArgs)
 import Text.ParserCombinators.Parsec hiding (spaces)
@@ -177,9 +184,12 @@ parseExpr =
       char ')'
       return x
 
-apply :: String -> [Type0Val] -> Type0Val
+apply :: String -> [Type0Val] -> ThrowsError Type0Val
 apply fn args =
-  maybe (Boolean False) ($ args) $ lookup fn primitives
+  maybe
+    (throwError $ NotFunction "Unrecognized primitive function" fn)
+    ($ args)
+    $ lookup fn primitives
 
 isString :: Type0Val -> Type0Val
 isString (Str _) = Boolean True
@@ -194,7 +204,7 @@ isSymbol :: Type0Val -> Type0Val
 isSymbol (Atom _) = Boolean True
 isSymbol _ = Boolean False
 
-primitives :: [(String, [Type0Val] -> Type0Val)]
+primitives :: [(String, [Type0Val] -> ThrowsError Type0Val)]
 primitives =
   [ ("+", numericBinop (+)),
     ("-", numericBinop (-)),
@@ -208,33 +218,78 @@ primitives =
     ("num?", unaryOp isNumber)
   ]
 
-unaryOp :: (Type0Val -> Type0Val) -> [Type0Val] -> Type0Val
-unaryOp fn [param] = fn param
+unaryOp ::
+  (Type0Val -> Type0Val) ->
+  [Type0Val] ->
+  ThrowsError Type0Val
+unaryOp fn [param] = return $ fn param
+unaryOp fn items = throwError $ NumArgs 1 items
 
-numericBinop :: (Integer -> Integer -> Integer) -> [Type0Val] -> Type0Val
-numericBinop op params = Number $ foldl1 op $ map unpackNum params
+numericBinop ::
+  (Integer -> Integer -> Integer) ->
+  [Type0Val] ->
+  ThrowsError Type0Val
+numericBinop op single@[_] = throwError $ NumArgs 2 single
+numericBinop op params = mapM unpackNum params >>= (return . Number . foldl1 op)
 
-unpackNum :: Type0Val -> Integer
-unpackNum (Number n) = n
-unpackNum (FloatN n) = truncate n
-unpackNum n = error $ "Not a number: " ++ show n
+unpackNum :: Type0Val -> ThrowsError Integer
+unpackNum (Number n) = return n
+unpackNum (FloatN n) = return $ truncate n
+unpackNum n = throwError $ TypeMismatch "number" n
 
-eval :: Type0Val -> Type0Val
-eval val@(Atom _) = val
-eval val@(Number _) = val
-eval val@(FloatN _) = val
-eval val@(Str _) = val
-eval val@(Charac _) = val
-eval val@(Boolean _) = val
-eval (List [Atom "quote", val]) = val -- (quote exp)
+eval :: Type0Val -> ThrowsError Type0Val
+eval val@(Atom _) = return val
+eval val@(Number _) = return val
+eval val@(FloatN _) = return val
+eval val@(Str _) = return val
+eval val@(Charac _) = return val
+eval val@(Boolean _) = return val
+eval (List [Atom "quote", val]) = return val -- (quote exp)
 eval (List (Atom fn : args)) =
-  apply fn $ map eval args -- (fn arg1 arg2 ...)
+  mapM eval args >>= apply fn -- (fn arg1 arg2 ...)
+eval badForm =
+  throwError $ BadSpecialForm "Unrecognized special form" badForm
 
-readExpr :: String -> Type0Val
+readExpr :: String -> ThrowsError Type0Val
 readExpr src = case parse parseExpr "type0" src of
-  Left err -> Str $ "No match: " ++ show err
-  Right val -> val
+  Left err -> throwError $ Parser err
+  Right val -> return val
+
+data Type0Error
+  = NumArgs Integer [Type0Val]
+  | TypeMismatch String Type0Val
+  | Parser ParseError
+  | BadSpecialForm String Type0Val
+  | NotFunction String String
+  | UnboundVar String String
+  | Default String
+
+showError :: Type0Error -> String
+showError (UnboundVar message varname) = message ++ ": " ++ varname
+showError (BadSpecialForm message form) = message ++ ": " ++ show form
+showError (NotFunction message func) = message ++ ": " ++ show func
+showError (NumArgs expected found) =
+  "Expected " ++ show expected ++ " args; found values " ++ stringifyList found
+showError (TypeMismatch expected found) =
+  "Invalid type: expected " ++ expected ++ ", found " ++ show found
+showError (Parser parseErr) = "Parse error at " ++ show parseErr
+
+instance Show Type0Error where
+  show = showError
+
+instance Error Type0Error where
+  noMsg = Default "An error has occurred"
+  strMsg = Default
+
+type ThrowsError = Either Type0Error
+
+trapError action = catchError action (return . show)
+
+extractValue :: ThrowsError a -> a
+extractValue (Right val) = val
 
 main :: IO ()
 main = do
-  getArgs >>= (print . eval . readExpr . head)
+  args <- getArgs
+  let res = fmap show $ readExpr (head args) >>= eval
+  putStrLn $ extractValue $ trapError res
